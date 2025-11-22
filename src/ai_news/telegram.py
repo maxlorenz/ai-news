@@ -7,13 +7,7 @@ from pydantic import BaseModel, Field
 
 from .models import ClassifiedArticle
 from .settings import SETTINGS
-
-
-def _make_client() -> OpenAI:
-    return OpenAI(
-        base_url=SETTINGS.openrouter_base_url,
-        api_key=SETTINGS.openrouter_api_key,
-    )
+from .llm import _choose_model, _make_client as _make_llm_client
 
 
 def send_telegram_message(message: str) -> None:
@@ -144,7 +138,8 @@ def select_top_3_articles(articles: list[ClassifiedArticle]) -> list[ClassifiedA
     if len(articles) <= 3:
         return articles
 
-    client = _make_client()
+    client = _make_llm_client()
+    model = _choose_model()  # Use free models from database
 
     # Build prompt with article info
     article_list = []
@@ -170,10 +165,12 @@ Select exactly 3 articles by their index numbers (0-based)."""
 
     try:
         logger.info(
-            "Using AI to select top 3 articles from {} candidates", len(articles)
+            "Using AI to select top 3 articles from {} candidates with model {}",
+            len(articles),
+            model,
         )
         response = client.beta.chat.completions.parse(
-            model="openai/gpt-4o-mini",  # Fast and cheap for this task
+            model=model,
             messages=[
                 {
                     "role": "system",
@@ -214,7 +211,8 @@ class ArticleSummary(BaseModel):
 
 def summarize_article_content(article: ClassifiedArticle, scraped_content: str) -> str:
     """Generate a detailed 1-paragraph summary of the article content."""
-    client = _make_client()
+    client = _make_llm_client()
+    model = _choose_model()  # Use free models from database
 
     prompt = f"""Summarize this AI news article in ONE paragraph (3-5 sentences). Focus on:
 - What was announced/released/discovered
@@ -231,9 +229,11 @@ Full article content:
 Write a clear, informative paragraph that captures the essence and significance of this article."""
 
     try:
-        logger.info(f"Generating detailed summary for: {article.title}")
+        logger.info(
+            f"Generating detailed summary for: {article.title} with model {model}"
+        )
         response = client.beta.chat.completions.parse(
-            model="openai/gpt-4o-mini",
+            model=model,
             messages=[
                 {"role": "system", "content": "You are an expert AI news summarizer."},
                 {"role": "user", "content": prompt},
