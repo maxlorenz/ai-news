@@ -56,7 +56,9 @@ def fetch_openrouter_models(timeout: int = 30) -> list[OpenRouterModel]:
 
 
 def filter_free_text_models(models: list[OpenRouterModel]) -> list[OpenRouterModel]:
-    """Filter for free models that support text input."""
+    """Filter for free models that support text input and have >=12B parameters (if specified)."""
+    import re
+
     free_text_models = []
 
     for model in models:
@@ -71,11 +73,25 @@ def filter_free_text_models(models: list[OpenRouterModel]) -> list[OpenRouterMod
             # If no architecture info, assume text support for backward compatibility
             supports_text = True
 
-        if is_free and supports_text:
-            free_text_models.append(model)
+        if not (is_free and supports_text):
+            continue
+
+        # Check for parameter size in model ID
+        # Match patterns like: 7b, 8b, 9b, 11b (should be excluded)
+        # Keep models without parameter info or with >=12b
+        param_match = re.search(r"(\d+)b", model.id.lower())
+        if param_match:
+            param_size = int(param_match.group(1))
+            if param_size < 12:
+                logger.debug(
+                    "Excluding model {} ({}B parameters < 12B)", model.id, param_size
+                )
+                continue
+
+        free_text_models.append(model)
 
     logger.info(
-        "Filtered to {} free text-supporting models (from {} total)",
+        "Filtered to {} free text-supporting models with >=12B params (from {} total)",
         len(free_text_models),
         len(models),
     )

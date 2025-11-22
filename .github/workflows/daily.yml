@@ -16,6 +16,7 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       OPENROUTER_HTTP_REFERER: ${{ secrets.OPENROUTER_HTTP_REFERER }}
       OPENROUTER_X_TITLE: ${{ secrets.OPENROUTER_X_TITLE }}
+      MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
 
     steps:
       - name: Check out repository
