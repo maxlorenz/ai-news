@@ -37,15 +37,15 @@ jobs:
         working-directory: ./ai_news
         run: uv run ai-news
 
-      - name: Commit updated DuckDB
+      - name: Commit updated Parquet files
         if: success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add src/ai_news.duckdb
+          git add data/*.parquet
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "chore: update DuckDB articles snapshot"
+            git commit -m "chore: update Parquet articles snapshot"
             git push
           fi

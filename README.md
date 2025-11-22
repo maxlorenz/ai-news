@@ -1,6 +1,6 @@
 # AI News Scraper
 
-Small uv-based Python app that scrapes AI-related news, classifies items using free OpenRouter-hosted LLMs, and stores interesting results in a local DuckDB database.
+Small uv-based Python app that scrapes AI-related news, classifies items using free OpenRouter-hosted LLMs, and stores interesting results in monthly Parquet files (via Polars).
 
 Sources:
 - Hacker News front page (`https://news.ycombinator.com/`)
@@ -79,36 +79,37 @@ This will:
 3. Call a randomly chosen free OpenRouter model (with automatic retries and fallbacks) to:
    - Decide whether each article is interesting (model releases or agent research only).
    - Generate a short summary and a `dedup_key` for each article.
-4. Load articles from the past 48 hours from DuckDB.
+4. Load articles from the past 48 hours from local Parquet storage.
 5. De-duplicate new items against the recent ones using URL, title, and `dedup_key`.
-6. Upsert interesting, non-duplicate articles into DuckDB.
+6. Upsert interesting, non-duplicate articles into monthly Parquet files.
 7. Log a short snapshot of what is stored.
 
 Log output is written both to the console and to `ai_news.log` in the project root.
 
-## DuckDB database
+## Parquet storage
 
-By default the database file is created at:
+By default, monthly Parquet files are created under:
 
 ```text
-ai_news/ai_news.duckdb
+./data/articles_YYYY_MM.parquet
 ```
 
-You can inspect it using the DuckDB CLI:
+You can inspect them with Polars or any Parquet-compatible tool. For example, in a Python shell:
 
-```bash
-uv run python -m duckdb ai_news.duckdb
-```
+```python
+import polars as pl
 
-Then, inside DuckDB:
+# Read all monthly files
+import glob
 
-```sql
-SELECT * FROM articles ORDER BY date DESC LIMIT 20;
+paths = glob.glob("data/articles_*.parquet")
+if paths:
+    df = pl.concat([pl.read_parquet(p) for p in paths])
+    print(df.sort("date", descending=True).head(20))
 ```
 
 ## Customizing
 
-- To change the database path, set `DUCKDB_PATH` in `.env`.
 - To change or pin the OpenRouter models used for classification, edit `FREE_OPENROUTER_MODELS` in `src/ai_news/settings.py`.
 
 ## Notes
