@@ -59,12 +59,9 @@ def _connect() -> duckdb.DuckDBPyConnection:
 
     # Create reports table (drop and recreate to ensure schema is correct)
     reports_table = f"{SETTINGS.motherduck_schema}.reports"
-    con.execute(f"DROP TABLE IF EXISTS {reports_table}")
-    con.execute(f"DROP SEQUENCE IF EXISTS {SETTINGS.motherduck_schema}.reports_id_seq")
-    con.execute(f"CREATE SEQUENCE {SETTINGS.motherduck_schema}.reports_id_seq START 1")
     con.execute(
         f"""
-        CREATE TABLE {reports_table} (
+        CREATE TABLE IF NOT EXISTS {reports_table} (
             id INTEGER DEFAULT nextval('{SETTINGS.motherduck_schema}.reports_id_seq'),
             report_date TIMESTAMP NOT NULL,
             article_count INTEGER NOT NULL,
