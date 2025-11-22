@@ -9,8 +9,8 @@ from .db import (
     get_all_articles,
     get_recent_articles,
     get_todays_articles,
+    replace_openrouter_models,
     upsert_articles,
-    upsert_openrouter_models,
 )
 from .llm import classify_articles, detect_duplicates
 from .openrouter_models import (
@@ -26,14 +26,17 @@ async def _async_run() -> None:
     now = datetime.utcnow()
     logger.info("Starting AI news run at {}", now.isoformat())
 
-    # 0. Fetch and update OpenRouter models
+    # 0. Fetch and replace OpenRouter models
     try:
         logger.info("=== FETCHING OPENROUTER MODELS ===")
         all_models = fetch_openrouter_models()
         free_text_models = filter_free_text_models(all_models)
         model_data = get_model_data_for_db(free_text_models)
-        upserted_count = upsert_openrouter_models(model_data)
-        logger.info("Updated {} free OpenRouter models in database", upserted_count)
+        replaced_count = replace_openrouter_models(model_data)
+        logger.info(
+            "Replaced all models with {} new free OpenRouter models in database",
+            replaced_count,
+        )
     except Exception as e:
         logger.error("Failed to fetch OpenRouter models: {}", e)
         logger.warning("Continuing with existing models in database")

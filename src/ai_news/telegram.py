@@ -24,7 +24,18 @@ def send_telegram_message(message: str) -> None:
 
     url = f"https://api.telegram.org/bot{SETTINGS.telegram_bot_token}/sendMessage"
 
+    # Mask token for logging (show first 10 and last 5 chars)
+    token_masked = (
+        f"{SETTINGS.telegram_bot_token[:10]}...{SETTINGS.telegram_bot_token[-5:]}"
+        if len(SETTINGS.telegram_bot_token) > 15
+        else "***"
+    )
+    logger.debug(
+        f"Telegram config - Bot token: {token_masked}, Chat ID: {SETTINGS.telegram_chat_id}"
+    )
+
     try:
+        logger.debug(f"Sending message of length {len(message)} chars")
         response = httpx.post(
             url,
             json={
@@ -35,10 +46,23 @@ def send_telegram_message(message: str) -> None:
             },
             timeout=30.0,
         )
+
+        # Log response details before raising
+        if response.status_code != 200:
+            logger.error(
+                f"Telegram API error - Status: {response.status_code}, Response: {response.text}"
+            )
+            logger.error(
+                f"Request payload - chat_id: {SETTINGS.telegram_chat_id}, message_length: {len(message)}, parse_mode: Markdown"
+            )
+
         response.raise_for_status()
         logger.info("Telegram message sent successfully")
     except Exception as e:
         logger.error(f"Failed to send Telegram message: {e}")
+        logger.error(f"Bot token (masked): {token_masked}")
+        logger.error(f"Chat ID: {SETTINGS.telegram_chat_id}")
+        logger.error(f"Message preview (first 200 chars): {message[:200]}")
         raise
 
 

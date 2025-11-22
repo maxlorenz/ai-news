@@ -190,35 +190,34 @@ def get_todays_articles() -> list[ClassifiedArticle]:
     ]
 
 
-def upsert_openrouter_models(
+def replace_openrouter_models(
     models: list[tuple[str, str, str, int, int | None, datetime]],
 ) -> int:
-    """Upsert OpenRouter models into the database.
+    """Replace all OpenRouter models in the database (delete old, insert new).
 
     Args:
         models: List of tuples (id, name, pricing_prompt, context_length, created, last_updated)
 
     Returns:
-        Number of models upserted
+        Number of models inserted
     """
     if not models:
-        logger.info("No OpenRouter models to upsert")
+        logger.info("No OpenRouter models to replace")
         return 0
 
     con = _connect()
     models_table = f"{SETTINGS.motherduck_schema}.openrouter_models"
     try:
-        logger.info("Upserting {} OpenRouter models", len(models))
+        # Delete all existing models
+        logger.info("Deleting all existing OpenRouter models")
+        con.execute(f"DELETE FROM {models_table}")
+
+        # Insert new models
+        logger.info("Inserting {} new OpenRouter models", len(models))
         con.executemany(
             f"""
             INSERT INTO {models_table} (id, name, pricing_prompt, context_length, created, last_updated)
             VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT (id) DO UPDATE SET
-                name = excluded.name,
-                pricing_prompt = excluded.pricing_prompt,
-                context_length = excluded.context_length,
-                created = excluded.created,
-                last_updated = excluded.last_updated
             """,
             models,
         )
@@ -231,7 +230,7 @@ def get_available_openrouter_models() -> list[str]:
     """Get list of available OpenRouter model IDs from database.
 
     Returns:
-        List of model IDs, ordered by context_length descending
+        List of top 10 model IDs, ordered by created timestamp descending (newest first)
     """
     con = _connect()
     models_table = f"{SETTINGS.motherduck_schema}.openrouter_models"
@@ -241,11 +240,14 @@ def get_available_openrouter_models() -> list[str]:
             f"""
             SELECT id
             FROM {models_table}
-            ORDER BY context_length DESC
+            ORDER BY created DESC NULLS LAST, context_length DESC
+            LIMIT 10
             """
         ).fetchall()
         model_ids = [row[0] for row in rows]
-        logger.info("Found {} OpenRouter models in database", len(model_ids))
+        logger.info(
+            "Found {} OpenRouter models in database (limited to 10)", len(model_ids)
+        )
         return model_ids
     finally:
         con.close()
