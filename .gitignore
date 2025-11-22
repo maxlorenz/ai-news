@@ -32,7 +32,7 @@ uv.lock
 .env.*
 
 # Databases / logs
-*.duckdb
+# (Keep DuckDB files under version control for history)
 *.db
 *.sqlite
 ai_news.log

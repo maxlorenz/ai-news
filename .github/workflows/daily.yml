@@ -1,0 +1,51 @@
+name: Daily AI News Scrape
+
+on:
+  schedule:
+    # Runs every day at 05:00 UTC
+    - cron: '0 5 * * *'
+  # Allow manual runs from the Actions tab
+  workflow_dispatch: {}
+
+jobs:
+  run-ai-news:
+    runs-on: ubuntu-latest
+
+    env:
+      # Passed into the app; configure these in repo settings → Secrets and variables → Actions
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_HTTP_REFERER: ${{ secrets.OPENROUTER_HTTP_REFERER }}
+      OPENROUTER_X_TITLE: ${{ secrets.OPENROUTER_X_TITLE }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Sync dependencies
+        working-directory: ./ai_news
+        run: uv sync
+
+      - name: Run ai-news scraper
+        working-directory: ./ai_news
+        run: uv run ai-news
+
+      - name: Commit updated DuckDB
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ai_news/src/ai_news.duckdb
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update DuckDB articles snapshot"
+            git push
+          fi
