@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Iterable, List
 
 import httpx
 from bs4 import BeautifulSoup
 from loguru import logger
+from pydantic import HttpUrl
 
-from .jina_reader import fetch_via_jina
 from .models import Article, Source
 
 
@@ -15,13 +14,13 @@ HN_URL = "https://news.ycombinator.com/"
 HF_PAPERS_BASE = "https://huggingface.co/papers/date/{date}"
 
 
-async def fetch_hacker_news(client: httpx.AsyncClient) -> List[Article]:
+async def fetch_hacker_news(client: httpx.AsyncClient) -> list[Article]:
     logger.info("Fetching Hacker News front page")
     resp = await client.get(HN_URL, timeout=20)
     resp.raise_for_status()
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    articles: List[Article] = []
+    articles: list[Article] = []
 
     for row in soup.select("tr.athing"):
         title_link = row.select_one("span.titleline a")
@@ -33,7 +32,7 @@ async def fetch_hacker_news(client: httpx.AsyncClient) -> List[Article]:
         try:
             art = Article(
                 title=title,
-                url=url,
+                url=HttpUrl(str(url)),
                 source=Source.HACKER_NEWS,
                 date=datetime.utcnow(),
             )
@@ -48,7 +47,7 @@ async def fetch_hacker_news(client: httpx.AsyncClient) -> List[Article]:
 async def fetch_huggingface_papers(
     client: httpx.AsyncClient,
     date: datetime,
-) -> List[Article]:
+) -> list[Article]:
     day_str = date.strftime("%Y-%m-%d")
     url = HF_PAPERS_BASE.format(date=day_str)
     logger.info("Fetching Hugging Face papers for {}", day_str)
@@ -58,7 +57,7 @@ async def fetch_huggingface_papers(
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    articles: List[Article] = []
+    articles: list[Article] = []
 
     # The page structure may evolve; we target generic paper cards.
     for card in soup.select("a.paper-card, a.block"):
@@ -79,7 +78,7 @@ async def fetch_huggingface_papers(
         try:
             art = Article(
                 title=title,
-                url=full_url,
+                url=HttpUrl(full_url),
                 source=Source.HUGGINGFACE_PAPERS,
                 date=date,
             )
@@ -91,11 +90,11 @@ async def fetch_huggingface_papers(
     return articles
 
 
-async def fetch_all_sources(current_date: datetime) -> List[Article]:
+async def fetch_all_sources(current_date: datetime) -> list[Article]:
     async with httpx.AsyncClient(headers={"User-Agent": "ai-news-bot/0.1"}) as client:
         hn_articles = await fetch_hacker_news(client)
         hf_articles = await fetch_huggingface_papers(client, current_date)
 
-    combined: List[Article] = [*hn_articles, *hf_articles]
+    combined: list[Article] = [*hn_articles, *hf_articles]
     logger.info("Total raw articles fetched: {}", len(combined))
     return combined

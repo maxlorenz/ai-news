@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import json
 import random
-from typing import Iterable, List, Tuple
+from collections.abc import Iterable
 
-import backoff
 from loguru import logger
 from openai import OpenAI
+from pydantic import BaseModel, Field
 
 from .models import Article, ClassifiedArticle
-from .settings import FREE_OPENROUTER_MODELS, SETTINGS
+from .settings import OPENROUTER_MODELS, SETTINGS
 
 
 def _make_client() -> OpenAI:
@@ -30,49 +29,63 @@ If yes, mark it as interesting and provide a concise 1-3 sentence summary.
 If not, mark it as not interesting.
 
 Only use the given overview; DO NOT follow links.
-
-Return strict JSON with the following schema:
-{
-  "results": [
-    {
-      "index": <integer index of the article in the input list>,
-      "is_interesting": true | false,
-      "summary": "short summary or empty string if not interesting",
-      "dedup_key": "short normalized string combining model/agent name and key details"
-    },
-    ...
-  ]
-}
 """
 
 
-def _build_user_prompt(articles: Iterable[Article]) -> str:
+class ArticleInput(BaseModel):
+    index: int
+    title: str
+    url: str
+    source: str
+    date: str
+
+
+class ArticlesInput(BaseModel):
+    articles: list[ArticleInput]
+
+
+class ClassificationResult(BaseModel):
+    index: int = Field(description="Integer index of the article in the input list")
+    is_interesting: bool = Field(description="Whether the article is interesting")
+    summary: str = Field(
+        default="", description="Short summary or empty string if not interesting"
+    )
+    dedup_key: str = Field(
+        default="",
+        description="Short normalized string combining model/agent name and key details",
+    )
+
+
+class ClassificationResponse(BaseModel):
+    results: list[ClassificationResult]
+
+
+def _build_user_input(articles: Iterable[Article]) -> ArticlesInput:
     payload = []
     for idx, art in enumerate(articles):
         payload.append(
-            {
-                "index": idx,
-                "title": art.title,
-                "url": str(art.url),
-                "source": art.source.value,
-                "date": art.date.isoformat(),
-            }
+            ArticleInput(
+                index=idx,
+                title=art.title,
+                url=str(art.url),
+                source=art.source.value,
+                date=art.date.isoformat(),
+            )
         )
-    return json.dumps({"articles": payload}, indent=2)
+    return ArticlesInput(articles=payload)
 
 
-def _choose_model(exclude: List[str] | None = None) -> str:
+def _choose_model(exclude: list[str] | None = None) -> str:
     exclude = exclude or []
-    candidates = [m for m in FREE_OPENROUTER_MODELS if m not in exclude]
+    candidates = [m for m in OPENROUTER_MODELS if m not in exclude]
     if not candidates:
-        candidates = FREE_OPENROUTER_MODELS
+        candidates = OPENROUTER_MODELS
     choice = random.choice(candidates)
     logger.debug("Using OpenRouter model: {}", choice)
     return choice
 
 
-@backoff.on_exception(backoff.expo, Exception, max_tries=1)
-def _call_openrouter(model: str, user_prompt: str) -> dict:
+def _call_openrouter(model: str, user_input: ArticlesInput) -> ClassificationResponse:
     client = _make_client()
     extra_headers = {}
     if SETTINGS.openrouter_referer:
@@ -82,39 +95,41 @@ def _call_openrouter(model: str, user_prompt: str) -> dict:
 
     logger.info("Calling OpenRouter model {} for classification", model)
 
-    response = client.chat.completions.create(
+    response = client.beta.chat.completions.parse(
         extra_headers=extra_headers or None,
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": user_prompt,
+                "content": user_input.model_dump_json(indent=2),
             },
         ],
-        response_format={"type": "json_object"},
+        response_format=ClassificationResponse,
         temperature=0.2,
     )
 
-    content = response.choices[0].message.content or "{}"
-    logger.debug("LLM raw response: {}", content)
-    return json.loads(content)
+    parsed = response.choices[0].message.parsed
+    if not parsed:
+        raise ValueError("Failed to parse response from LLM")
+    logger.debug("LLM parsed response: {}", parsed)
+    return parsed
 
 
-def classify_articles(articles: List[Article]) -> List[ClassifiedArticle]:
+def classify_articles(articles: list[Article]) -> list[ClassifiedArticle]:
     if not articles:
         return []
 
     # For simplicity, send them all in one batch; the lists are small.
-    user_prompt = _build_user_prompt(articles)
+    user_input = _build_user_input(articles)
 
-    tried: List[str] = []
+    tried: list[str] = []
     last_exc: Exception | None = None
-    for _ in range(len(FREE_OPENROUTER_MODELS)):
+    for _ in range(len(OPENROUTER_MODELS)):
         model = _choose_model(tried)
         tried.append(model)
         try:
-            data = _call_openrouter(model, user_prompt)
+            data = _call_openrouter(model, user_input)
             break
         except Exception as exc:  # noqa: BLE001
             logger.warning("Model {} failed: {}", model, exc)
@@ -123,14 +138,20 @@ def classify_articles(articles: List[Article]) -> List[ClassifiedArticle]:
     else:
         raise RuntimeError("All OpenRouter models failed") from last_exc
 
-    results = {int(r["index"]): r for r in data.get("results", [])}
+    results = {r.index: r for r in data.results}
 
-    classified: List[ClassifiedArticle] = []
+    classified: list[ClassifiedArticle] = []
     for idx, art in enumerate(articles):
-        r = results.get(idx) or {}
-        is_interesting = bool(r.get("is_interesting", False))
-        summary = (r.get("summary") or "").strip() or None
-        dedup_key = (r.get("dedup_key") or "").strip() or None
+        r = results.get(idx)
+        if r:
+            is_interesting = r.is_interesting
+            summary = r.summary.strip() or None
+            dedup_key = r.dedup_key.strip() or None
+        else:
+            is_interesting = False
+            summary = None
+            dedup_key = None
+
         art_data = art.model_dump()
         art_data["summary"] = summary
         classified.append(
@@ -145,9 +166,9 @@ def classify_articles(articles: List[Article]) -> List[ClassifiedArticle]:
 
 
 def detect_duplicates(
-    new_articles: List[ClassifiedArticle],
-    recent_articles: List[ClassifiedArticle],
-) -> Tuple[List[ClassifiedArticle], List[ClassifiedArticle]]:
+    new_articles: list[ClassifiedArticle],
+    recent_articles: list[ClassifiedArticle],
+) -> tuple[list[ClassifiedArticle], list[ClassifiedArticle]]:
     """Return (unique_new, duplicates) based on URL, title, or dedup_key.
 
     - URL or exact title match is always considered a duplicate.
@@ -158,8 +179,8 @@ def detect_duplicates(
     title_set = {a.title.strip().lower() for a in recent_articles}
     key_set = {a.dedup_key.strip().lower() for a in recent_articles if a.dedup_key}
 
-    unique: List[ClassifiedArticle] = []
-    dups: List[ClassifiedArticle] = []
+    unique: list[ClassifiedArticle] = []
+    dups: list[ClassifiedArticle] = []
 
     for art in new_articles:
         is_dup = False

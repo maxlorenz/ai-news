@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, HttpUrl
 
@@ -17,9 +16,9 @@ class Article(BaseModel):
     url: HttpUrl
     source: Source
     date: datetime
-    summary: Optional[str] = None
+    summary: str | None = None
 
 
 class ClassifiedArticle(Article):
     is_interesting: bool
-    dedup_key: Optional[str] = None
+    dedup_key: str | None = None

@@ -5,9 +5,9 @@ from datetime import datetime
 
 from loguru import logger
 
+from .db import get_all_articles, get_recent_articles, upsert_articles
 from .llm import classify_articles, detect_duplicates
 from .sources import fetch_all_sources
-from .storage import load_all_articles, load_recent_articles, upsert_articles
 
 
 async def _async_run() -> None:
@@ -21,7 +21,7 @@ async def _async_run() -> None:
     classified = classify_articles(raw_articles)
 
     # 3. Load recent articles for duplicate detection (48h)
-    recent = load_recent_articles(hours=48)
+    recent = get_recent_articles(hours=48)
 
     # 4. Deduplicate based on URL, title, and LLM dedup key
     unique, duplicates = detect_duplicates(classified, recent)
@@ -37,13 +37,13 @@ async def _async_run() -> None:
         len(interesting_to_store),
     )
 
-    # 5. Upsert into Parquet (monthly files)
+    # 5. Upsert into MotherDuck
     inserted = upsert_articles(interesting_to_store)
-    logger.info("Upserted {} interesting articles into Parquet storage", inserted)
+    logger.info("Upserted {} interesting articles into MotherDuck", inserted)
 
     # 6. Log current snapshot
-    all_articles = load_all_articles()
-    logger.info("Parquet storage currently holds {} articles", len(all_articles))
+    all_articles = get_all_articles()
+    logger.info("MotherDuck currently holds {} articles", len(all_articles))
     for art in all_articles[:10]:
         logger.info(
             "[DB] {} | {} | {} | {}",
