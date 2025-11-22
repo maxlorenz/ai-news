@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from .models import Article, ClassifiedArticle
 from .settings import OPENROUTER_MODELS, SETTINGS
+from .db import get_available_openrouter_models
 
 
 def _make_client() -> OpenAI:
@@ -19,16 +20,32 @@ def _make_client() -> OpenAI:
 
 
 SYSTEM_PROMPT = """You are a strict filter for AI news.
-You receive a list of short article candidates (title, url, source, and an overview snippet).
+You receive a list of article candidates with title, url, source, date, and optionally an overview snippet.
 
-You must decide for each article:
-- Is it about a NEW AI MODEL release (e.g. a new LLM/vision model or major version like Kimi K2)?
-- OR is it about AGENT research (agent architectures, tools, benchmarks, or frameworks)?
+You must decide for each article based on the TITLE (and overview if available):
+- Is it about a NEW AI MODEL release (e.g. a new LLM, vision model, or major version like GPT-5, Gemini 2.5, Claude 4, Llama 4, Qwen 3, DeepSeek, etc.)?
+- OR is it about AGENT/AGENTIC AI research or tools (agent architectures, agent frameworks, multi-agent systems, tool use, agent benchmarks)?
 
-If yes, mark it as interesting and provide a concise 1-3 sentence summary.
-If not, mark it as not interesting.
+Examples of INTERESTING articles:
+- "OpenAI releases GPT-5" 
+- "Anthropic announces Claude 4"
+- "Google launches Gemini 2.5 Flash"
+- "Meta releases Llama 4"
+- "New multi-agent framework for..."
+- "Agent benchmarking suite..."
+- "Tool-augmented agents..."
 
-Only use the given overview; DO NOT follow links.
+Examples of NOT interesting:
+- General tech news
+- Hardware/infrastructure (unless specifically about AI training/inference)
+- Software engineering tools (unless agent-related)
+- Business/startup news
+- General programming articles
+
+If yes to either criterion, mark it as interesting and provide a concise 1-2 sentence summary.
+If not, mark it as not interesting (leave summary and dedup_key empty).
+
+IMPORTANT: Be somewhat lenient - if a title mentions AI models, LLMs, agents, or related terms, mark it as interesting even if you're not 100% certain.
 """
 
 
@@ -38,6 +55,7 @@ class ArticleInput(BaseModel):
     url: str
     source: str
     date: str
+    overview: str = ""  # Add overview field
 
 
 class ArticlesInput(BaseModel):
@@ -63,6 +81,8 @@ class ClassificationResponse(BaseModel):
 def _build_user_input(articles: Iterable[Article]) -> ArticlesInput:
     payload = []
     for idx, art in enumerate(articles):
+        # Use the summary field if available (populated by sources)
+        overview = art.summary or ""
         payload.append(
             ArticleInput(
                 index=idx,
@@ -70,6 +90,7 @@ def _build_user_input(articles: Iterable[Article]) -> ArticlesInput:
                 url=str(art.url),
                 source=art.source.value,
                 date=art.date.isoformat(),
+                overview=overview,
             )
         )
     return ArticlesInput(articles=payload)
@@ -77,11 +98,26 @@ def _build_user_input(articles: Iterable[Article]) -> ArticlesInput:
 
 def _choose_model(exclude: list[str] | None = None) -> str:
     exclude = exclude or []
+
+    # Try to load models from database first
+    try:
+        db_models = get_available_openrouter_models()
+        if db_models:
+            candidates = [m for m in db_models if m not in exclude]
+            if not candidates:
+                candidates = db_models
+            choice = random.choice(candidates)
+            logger.debug("Using OpenRouter model from DB: {}", choice)
+            return choice
+    except Exception as e:
+        logger.warning("Failed to load models from DB: {}", e)
+
+    # Fallback to hardcoded list
     candidates = [m for m in OPENROUTER_MODELS if m not in exclude]
     if not candidates:
         candidates = OPENROUTER_MODELS
     choice = random.choice(candidates)
-    logger.debug("Using OpenRouter model: {}", choice)
+    logger.debug("Using OpenRouter model from settings: {}", choice)
     return choice
 
 
@@ -95,6 +131,13 @@ def _call_openrouter(model: str, user_input: ArticlesInput) -> ClassificationRes
 
     logger.info("Calling OpenRouter model {} for classification", model)
 
+    # Log what we're sending to the LLM
+    input_json = user_input.model_dump_json(indent=2)
+    logger.debug(
+        "Sending to LLM: {}",
+        input_json[:500] + "..." if len(input_json) > 500 else input_json,
+    )
+
     response = client.beta.chat.completions.parse(
         extra_headers=extra_headers or None,
         model=model,
@@ -102,7 +145,7 @@ def _call_openrouter(model: str, user_input: ArticlesInput) -> ClassificationRes
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": user_input.model_dump_json(indent=2),
+                "content": input_json,
             },
         ],
         response_format=ClassificationResponse,
@@ -123,9 +166,19 @@ def classify_articles(articles: list[Article]) -> list[ClassifiedArticle]:
     # For simplicity, send them all in one batch; the lists are small.
     user_input = _build_user_input(articles)
 
+    # Get available models from DB or fallback to settings
+    try:
+        available_models = get_available_openrouter_models()
+        if not available_models:
+            logger.warning("No models in DB, using hardcoded list")
+            available_models = list(OPENROUTER_MODELS)
+    except Exception as e:
+        logger.warning("Failed to load models from DB: {}, using hardcoded list", e)
+        available_models = list(OPENROUTER_MODELS)
+
     tried: list[str] = []
     last_exc: Exception | None = None
-    for _ in range(len(OPENROUTER_MODELS)):
+    for _ in range(len(available_models)):
         model = _choose_model(tried)
         tried.append(model)
         try:

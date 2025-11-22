@@ -5,8 +5,18 @@ from datetime import datetime
 
 from loguru import logger
 
-from .db import get_all_articles, get_recent_articles, upsert_articles
+from .db import (
+    get_all_articles,
+    get_recent_articles,
+    upsert_articles,
+    upsert_openrouter_models,
+)
 from .llm import classify_articles, detect_duplicates
+from .openrouter_models import (
+    fetch_openrouter_models,
+    filter_free_text_models,
+    get_model_data_for_db,
+)
 from .sources import fetch_all_sources
 
 
@@ -14,16 +24,77 @@ async def _async_run() -> None:
     now = datetime.utcnow()
     logger.info("Starting AI news run at {}", now.isoformat())
 
+    # 0. Fetch and update OpenRouter models
+    try:
+        logger.info("=== FETCHING OPENROUTER MODELS ===")
+        all_models = fetch_openrouter_models()
+        free_text_models = filter_free_text_models(all_models)
+        model_data = get_model_data_for_db(free_text_models)
+        upserted_count = upsert_openrouter_models(model_data)
+        logger.info("Updated {} free OpenRouter models in database", upserted_count)
+    except Exception as e:
+        logger.error("Failed to fetch OpenRouter models: {}", e)
+        logger.warning("Continuing with existing models in database")
+
     # 1. Fetch raw articles from all sources
     raw_articles = await fetch_all_sources(current_date=now)
 
-    # 2. Classify and summarise via LLM
-    classified = classify_articles(raw_articles)
+    # Log what we fetched
+    logger.info("=== FETCHED ARTICLES ===")
+    for idx, art in enumerate(raw_articles[:10]):  # Show first 10
+        logger.info(
+            "[{}] {} | {} | {}",
+            idx,
+            art.source.value,
+            art.title,
+            art.url,
+        )
+    if len(raw_articles) > 10:
+        logger.info("... and {} more articles", len(raw_articles) - 10)
 
-    # 3. Load recent articles for duplicate detection (48h)
+    # 2. Group articles by source
+    from collections import defaultdict
+
+    by_source: dict[str, list] = defaultdict(list)
+    for art in raw_articles:
+        by_source[art.source.value].append(art)
+
+    logger.info("Grouped into {} sources", len(by_source))
+
+    # 3. Classify each source independently (one LLM call per source)
+    classified = []
+    for source_name, articles in by_source.items():
+        logger.info("Classifying {} articles from {}", len(articles), source_name)
+        source_classified = classify_articles(articles)
+        classified.extend(source_classified)
+
+        # Log interesting articles from this source
+        interesting_count = sum(1 for a in source_classified if a.is_interesting)
+        if interesting_count > 0:
+            logger.info(
+                "Found {} interesting articles from {}", interesting_count, source_name
+            )
+            for art in source_classified:
+                if art.is_interesting:
+                    logger.info(
+                        "  ✓ {} | {}",
+                        art.title,
+                        art.summary,
+                    )
+
+    # Log classification summary
+    logger.info("=== CLASSIFICATION SUMMARY ===")
+    total_interesting = sum(1 for a in classified if a.is_interesting)
+    logger.info(
+        "Total: {} interesting out of {} articles", total_interesting, len(classified)
+    )
+    if total_interesting == 0:
+        logger.warning("No articles classified as interesting!")
+
+    # 4. Load recent articles for duplicate detection (48h)
     recent = get_recent_articles(hours=48)
 
-    # 4. Deduplicate based on URL, title, and LLM dedup key
+    # 5. Deduplicate based on URL, title, and LLM dedup key
     unique, duplicates = detect_duplicates(classified, recent)
 
     for dup in duplicates:
@@ -37,11 +108,11 @@ async def _async_run() -> None:
         len(interesting_to_store),
     )
 
-    # 5. Upsert into MotherDuck
+    # 6. Upsert into MotherDuck
     inserted = upsert_articles(interesting_to_store)
     logger.info("Upserted {} interesting articles into MotherDuck", inserted)
 
-    # 6. Log current snapshot
+    # 7. Log current snapshot
     all_articles = get_all_articles()
     logger.info("MotherDuck currently holds {} articles", len(all_articles))
     for art in all_articles[:10]:

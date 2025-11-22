@@ -25,6 +25,8 @@ def _connect() -> duckdb.DuckDBPyConnection:
     # Ensure we're on my_db and schema exists
     con.execute(f"USE {SETTINGS.motherduck_database}")
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {SETTINGS.motherduck_schema}")
+
+    # Create articles table
     full_table = f"{SETTINGS.motherduck_schema}.articles"
     con.execute(
         f"""
@@ -39,6 +41,22 @@ def _connect() -> duckdb.DuckDBPyConnection:
         );
         """
     )
+
+    # Create openrouter_models table
+    models_table = f"{SETTINGS.motherduck_schema}.openrouter_models"
+    con.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {models_table} (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            pricing_prompt TEXT NOT NULL,
+            context_length INTEGER NOT NULL,
+            created INTEGER,
+            last_updated TIMESTAMP NOT NULL
+        );
+        """
+    )
+
     return con
 
 
@@ -139,3 +157,64 @@ def get_all_articles() -> list[ClassifiedArticle]:
         )
         for row in rows
     ]
+
+
+def upsert_openrouter_models(
+    models: list[tuple[str, str, str, int, int | None, datetime]],
+) -> int:
+    """Upsert OpenRouter models into the database.
+
+    Args:
+        models: List of tuples (id, name, pricing_prompt, context_length, created, last_updated)
+
+    Returns:
+        Number of models upserted
+    """
+    if not models:
+        logger.info("No OpenRouter models to upsert")
+        return 0
+
+    con = _connect()
+    models_table = f"{SETTINGS.motherduck_schema}.openrouter_models"
+    try:
+        logger.info("Upserting {} OpenRouter models", len(models))
+        con.executemany(
+            f"""
+            INSERT INTO {models_table} (id, name, pricing_prompt, context_length, created, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                name = excluded.name,
+                pricing_prompt = excluded.pricing_prompt,
+                context_length = excluded.context_length,
+                created = excluded.created,
+                last_updated = excluded.last_updated
+            """,
+            models,
+        )
+        return len(models)
+    finally:
+        con.close()
+
+
+def get_available_openrouter_models() -> list[str]:
+    """Get list of available OpenRouter model IDs from database.
+
+    Returns:
+        List of model IDs, ordered by context_length descending
+    """
+    con = _connect()
+    models_table = f"{SETTINGS.motherduck_schema}.openrouter_models"
+    try:
+        logger.debug("Fetching available OpenRouter models from database")
+        rows = con.execute(
+            f"""
+            SELECT id
+            FROM {models_table}
+            ORDER BY context_length DESC
+            """
+        ).fetchall()
+        model_ids = [row[0] for row in rows]
+        logger.info("Found {} OpenRouter models in database", len(model_ids))
+        return model_ids
+    finally:
+        con.close()

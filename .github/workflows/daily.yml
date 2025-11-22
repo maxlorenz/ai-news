@@ -30,22 +30,7 @@ jobs:
         run: pip install uv
 
       - name: Sync dependencies
-        working-directory: ./ai_news
         run: uv sync
 
       - name: Run ai-news scraper
-        working-directory: ./ai_news
         run: uv run ai-news
-
-      - name: Commit updated Parquet files
-        if: success()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/*.parquet
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "chore: update Parquet articles snapshot"
-            git push
-          fi
