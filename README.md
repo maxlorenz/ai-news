@@ -1,118 +1,71 @@
-# AI News Scraper
+# AI News Aggregator
 
-Small uv-based Python app that scrapes AI-related news, classifies items using free OpenRouter-hosted LLMs, and stores interesting results in monthly Parquet files (via Polars).
+Automated daily scraper that finds interesting AI news (model releases and agent research), classifies articles using free LLMs, stores them in MotherDuck, and sends Telegram summaries every morning.
 
-Sources:
-- Hacker News front page (`https://news.ycombinator.com/`)
-- Hugging Face AI papers for a given date (`https://huggingface.co/papers/date/YYYY-MM-DD`, using the current date)
+## What It Does
 
-The LLM filter only keeps:
-- New AI model releases (e.g. new LLMs, new versions like Kimi K2)
-- Agent research (agent architectures, benchmarks, frameworks, tooling)
+- **Scrapes** 7 AI news sources (Hacker News, HuggingFace Papers, Apple ML, Google AI, Meta AI, MIT AI, Berkeley AI)
+- **Classifies** articles using OpenRouter's free LLMs (focuses on new model releases and agent research)
+- **Stores** interesting articles in MotherDuck (cloud DuckDB)
+- **Sends** daily Telegram summaries at 8 AM Singapore time featuring:
+  - Brief overview of all articles found
+  - Top 3 articles (AI-selected) with detailed summaries scraped via Jina.ai
 
-Stored fields per article:
-- `title`
-- `url`
-- `source`
-- `date`
-- `summary` (LLM-generated, based on overview only)
-- `is_interesting`
-- `dedup_key` (LLM-normalized key for duplicate detection)
+## Setup for GitHub Actions
 
-## Project layout
+### 1. OpenRouter API Key
+- Sign up at [OpenRouter](https://openrouter.ai/)
+- Go to [Keys page](https://openrouter.ai/keys)
+- Create a new API key
+- Add to GitHub Secrets as `OPENROUTER_API_KEY`
 
-- `src/ai_news/settings.py` – configuration and environment loading
-- `src/ai_news/models.py` – shared Pydantic models and enums
-- `src/ai_news/db.py` – DuckDB connection and helpers
-- `src/ai_news/sources.py` – site-specific scraping utilities
-- `src/ai_news/llm.py` – OpenRouter client, classification, and duplicate detection
-- `src/ai_news/main.py` – orchestration logic
-- `src/ai_news/__init__.py` – CLI entrypoint used by `ai-news` script
+### 2. MotherDuck Token
+- Sign up at [MotherDuck](https://motherduck.com/)
+- Go to [Settings → Personal Access Tokens](https://app.motherduck.com/settings/tokens)
+- Create a new token
+- Add to GitHub Secrets as `MOTHERDUCK_TOKEN`
 
-## Prerequisites
+### 3. Telegram Bot
+**Create Bot:**
+- Message [@BotFather](https://t.me/botfather) on Telegram
+- Send `/newbot` and follow instructions
+- Copy the bot token (format: `1234567890:ABCdefGHIjklMNOpqrsTUVwxyz`)
+- Add to GitHub Secrets as `TELEGRAM_BOT_TOKEN`
 
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/) installed (`pip install uv` or via your package manager)
-- Internet access so the app can reach Hacker News, Hugging Face, and OpenRouter
+**Get Chat ID:**
+- Create a Telegram group
+- Add your bot to the group
+- Send any message in the group
+- Visit: `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
+- Find the `"chat":{"id":-1234567890}` value (negative number for groups)
+- Add to GitHub Secrets as `TELEGRAM_CHAT_ID`
 
-## Setup
+**Enable Group Messages:**
+- Message [@BotFather](https://t.me/botfather)
+- Send `/mybots` → select your bot → Bot Settings → Group Privacy → Turn OFF
 
-1. Change into the project directory:
+### 4. Add All Secrets to GitHub
 
-```bash
-cd ai_news
-```
+Go to your repository → Settings → Secrets and variables → Actions → New repository secret
 
-2. Inspect or edit the `.env` file. It is created with the requested OpenRouter key by default:
+Add these 4 secrets:
+- `OPENROUTER_API_KEY`
+- `MOTHERDUCK_TOKEN`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
 
-```bash
-cat .env
-```
+Optional (for OpenRouter rankings):
+- `OPENROUTER_HTTP_REFERER` - your site URL
+- `OPENROUTER_X_TITLE` - your site title
 
-You can adjust:
+## Running Locally
 
-- `OPENROUTER_API_KEY` – your personal key (recommended)
-- `OPENROUTER_HTTP_REFERER` – optional site URL for OpenRouter rankings
-- `OPENROUTER_X_TITLE` – optional site title for OpenRouter rankings
-- `DUCKDB_PATH` – optional override for the DuckDB database file
+1. Install [uv](https://docs.astral.sh/uv/): `pip install uv`
+2. Copy `.env.example` to `.env` and fill in credentials
+3. Run: `uv run ai-news`
 
-3. Ensure dependencies are installed (already done when scaffolding, but safe to repeat):
+## Schedule
 
-```bash
-uv sync
-```
+GitHub Actions runs automatically every day at **8:00 AM Singapore time (00:00 UTC)**.
 
-This will create a `.venv` and install all dependencies.
-
-## Running the app
-
-To run the scraper + classifier once:
-
-```bash
-uv run ai-news
-```
-
-This will:
-
-1. Load configuration from `.env`.
-2. Fetch candidate articles from Hacker News and Hugging Face (for today's date).
-3. Call a randomly chosen free OpenRouter model (with automatic retries and fallbacks) to:
-   - Decide whether each article is interesting (model releases or agent research only).
-   - Generate a short summary and a `dedup_key` for each article.
-4. Load articles from the past 48 hours from local Parquet storage.
-5. De-duplicate new items against the recent ones using URL, title, and `dedup_key`.
-6. Upsert interesting, non-duplicate articles into monthly Parquet files.
-7. Log a short snapshot of what is stored.
-
-Log output is written both to the console and to `ai_news.log` in the project root.
-
-## Parquet storage
-
-By default, monthly Parquet files are created under:
-
-```text
-./data/articles_YYYY_MM.parquet
-```
-
-You can inspect them with Polars or any Parquet-compatible tool. For example, in a Python shell:
-
-```python
-import polars as pl
-
-# Read all monthly files
-import glob
-
-paths = glob.glob("data/articles_*.parquet")
-if paths:
-    df = pl.concat([pl.read_parquet(p) for p in paths])
-    print(df.sort("date", descending=True).head(20))
-```
-
-## Customizing
-
-- To change or pin the OpenRouter models used for classification, edit `FREE_OPENROUTER_MODELS` in `src/ai_news/settings.py`.
-
-## Notes
-
-- The app only uses the high-level metadata (titles and links from the listing pages). It does **not** crawl article bodies in depth.
-- Duplicate detection uses a combination of URL, normalized title, and LLM-generated `dedup_key`, checked against articles stored in the last 48 hours.
+You can also trigger manual runs from the Actions tab.
