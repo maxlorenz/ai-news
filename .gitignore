@@ -1,0 +1,38 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+.build/
+.dist/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# uv
+.uv/
+uv.lock
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+
+# Local configuration
+.env
+.env.*
+
+# Databases / logs
+*.duckdb
+*.db
+*.sqlite
+ai_news.log

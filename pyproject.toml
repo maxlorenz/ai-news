@@ -1,0 +1,28 @@
+[project]
+name = "ai-news"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "backoff>=2.2.1",
+    "beautifulsoup4>=4.14.2",
+    "duckdb>=1.4.2",
+    "httpx>=0.28.1",
+    "loguru>=0.7.3",
+    "openai>=2.8.1",
+    "pydantic>=2.12.4",
+    "python-dotenv>=1.2.1",
+]
+
+[project.scripts]
+ai-news = "ai_news:main"
+
+[build-system]
+requires = ["uv_build>=0.9.11,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ipython>=9.7.0",
+]
