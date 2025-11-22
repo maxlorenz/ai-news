@@ -2,8 +2,8 @@ name: Daily AI News Scrape
 
 on:
   schedule:
-    # Runs every day at 05:00 UTC
-    - cron: '0 5 * * *'
+    # Runs every day at 00:00 UTC (8:00 AM Singapore time, UTC+8)
+    - cron: '0 0 * * *'
   # Allow manual runs from the Actions tab
   workflow_dispatch: {}
 
@@ -17,6 +17,8 @@ jobs:
       OPENROUTER_HTTP_REFERER: ${{ secrets.OPENROUTER_HTTP_REFERER }}
       OPENROUTER_X_TITLE: ${{ secrets.OPENROUTER_X_TITLE }}
       MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
     steps:
       - name: Check out repository

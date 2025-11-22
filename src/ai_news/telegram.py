@@ -1,0 +1,245 @@
+from __future__ import annotations
+
+import httpx
+from loguru import logger
+from openai import OpenAI
+from pydantic import BaseModel, Field
+
+from .models import ClassifiedArticle
+from .settings import SETTINGS
+
+
+def _make_client() -> OpenAI:
+    return OpenAI(
+        base_url=SETTINGS.openrouter_base_url,
+        api_key=SETTINGS.openrouter_api_key,
+    )
+
+
+def send_telegram_message(message: str) -> None:
+    """Send a message to the configured Telegram chat."""
+    if not SETTINGS.telegram_bot_token or not SETTINGS.telegram_chat_id:
+        logger.warning("Telegram credentials not configured, skipping notification")
+        return
+
+    url = f"https://api.telegram.org/bot{SETTINGS.telegram_bot_token}/sendMessage"
+
+    try:
+        response = httpx.post(
+            url,
+            json={
+                "chat_id": SETTINGS.telegram_chat_id,
+                "text": message,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": False,
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        logger.info("Telegram message sent successfully")
+    except Exception as e:
+        logger.error(f"Failed to send Telegram message: {e}")
+        raise
+
+
+def scrape_with_jina(url: str) -> str:
+    """Scrape article content using Jina.ai Reader API."""
+    jina_url = f"https://r.jina.ai/{url}"
+
+    try:
+        logger.info(f"Scraping article with Jina.ai: {url}")
+        response = httpx.get(jina_url, timeout=30.0)
+        response.raise_for_status()
+        content = response.text
+
+        # Limit content to avoid token limits (keep first 8000 chars ~2000 tokens)
+        if len(content) > 8000:
+            content = content[:8000] + "\n\n[Content truncated...]"
+
+        logger.info(f"Successfully scraped {len(content)} characters")
+        return content
+    except Exception as e:
+        logger.error(f"Failed to scrape article {url}: {e}")
+        return f"Failed to scrape content: {str(e)}"
+
+
+class Top3Selection(BaseModel):
+    """AI-selected top 3 articles with reasoning."""
+
+    article_indices: list[int] = Field(
+        description="List of 3 article indices (0-based) representing the most important/interesting articles",
+        min_length=1,
+        max_length=3,
+    )
+    reasoning: str = Field(
+        description="Brief explanation of why these 3 articles were chosen"
+    )
+
+
+def select_top_3_articles(articles: list[ClassifiedArticle]) -> list[ClassifiedArticle]:
+    """Use AI to select the top 3 most important articles."""
+    if len(articles) <= 3:
+        return articles
+
+    client = _make_client()
+
+    # Build prompt with article info
+    article_list = []
+    for idx, art in enumerate(articles):
+        article_list.append(
+            f"{idx}. {art.title}\n   URL: {art.url}\n   Summary: {art.summary or 'No summary'}"
+        )
+
+    articles_text = "\n\n".join(article_list)
+
+    prompt = f"""You are analyzing a list of AI news articles. Select the TOP 3 most important and impactful articles.
+
+Consider:
+- Major model releases (GPT, Claude, Gemini, Llama, etc.) are highest priority
+- Novel agent architectures or frameworks
+- Significant research breakthroughs
+- Industry-wide impact
+
+Articles:
+{articles_text}
+
+Select exactly 3 articles by their index numbers (0-based)."""
+
+    try:
+        logger.info(
+            "Using AI to select top 3 articles from {} candidates", len(articles)
+        )
+        response = client.beta.chat.completions.parse(
+            model="openai/gpt-4o-mini",  # Fast and cheap for this task
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an AI news curator selecting the most important articles.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            response_format=Top3Selection,
+            temperature=0.3,
+        )
+
+        parsed = response.choices[0].message.parsed
+        if not parsed:
+            raise ValueError("Failed to parse AI response")
+
+        logger.info(
+            "AI selected articles: {} - Reasoning: {}",
+            parsed.article_indices,
+            parsed.reasoning,
+        )
+
+        # Return selected articles
+        top_3 = [articles[idx] for idx in parsed.article_indices if idx < len(articles)]
+        return top_3[:3]  # Ensure max 3
+
+    except Exception as e:
+        logger.error(f"Failed to select top 3 with AI: {e}, falling back to first 3")
+        return articles[:3]
+
+
+class ArticleSummary(BaseModel):
+    """Detailed summary of a scraped article."""
+
+    summary: str = Field(
+        description="One paragraph (3-5 sentences) summarizing the key points and significance of the article"
+    )
+
+
+def summarize_article_content(article: ClassifiedArticle, scraped_content: str) -> str:
+    """Generate a detailed 1-paragraph summary of the article content."""
+    client = _make_client()
+
+    prompt = f"""Summarize this AI news article in ONE paragraph (3-5 sentences). Focus on:
+- What was announced/released/discovered
+- Key technical details or capabilities
+- Why it matters to the AI community
+
+Article title: {article.title}
+Article URL: {article.url}
+Brief summary: {article.summary or "N/A"}
+
+Full article content:
+{scraped_content}
+
+Write a clear, informative paragraph that captures the essence and significance of this article."""
+
+    try:
+        logger.info(f"Generating detailed summary for: {article.title}")
+        response = client.beta.chat.completions.parse(
+            model="openai/gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert AI news summarizer."},
+                {"role": "user", "content": prompt},
+            ],
+            response_format=ArticleSummary,
+            temperature=0.4,
+        )
+
+        parsed = response.choices[0].message.parsed
+        if not parsed:
+            raise ValueError("Failed to parse summary")
+
+        return parsed.summary
+
+    except Exception as e:
+        logger.error(f"Failed to generate summary for {article.title}: {e}")
+        return article.summary or "Summary unavailable"
+
+
+def create_daily_summary(articles: list[ClassifiedArticle]) -> str:
+    """Create the full daily summary message with top 3 detailed articles."""
+    if not articles:
+        return "📭 No interesting AI news today!"
+
+    # Header
+    message_parts = [
+        "🤖 *Daily AI News Summary*",
+        f"📊 Found {len(articles)} interesting article{'s' if len(articles) != 1 else ''} today\n",
+    ]
+
+    # Brief overview of all articles
+    message_parts.append("📰 *All Articles:*")
+    for idx, art in enumerate(articles, 1):
+        message_parts.append(f"{idx}. [{art.title}]({art.url})")
+        if art.summary:
+            message_parts.append(f"   _{art.summary}_\n")
+
+    message_parts.append("\n" + "=" * 50 + "\n")
+
+    # Select and detail top 3
+    logger.info("Selecting top 3 articles for detailed summaries...")
+    top_3 = select_top_3_articles(articles)
+
+    message_parts.append("🌟 *Top 3 Deep Dives:*\n")
+
+    for idx, art in enumerate(top_3, 1):
+        message_parts.append(f"*{idx}. {art.title}*")
+        message_parts.append(f"🔗 {art.url}\n")
+
+        # Scrape and summarize
+        try:
+            scraped_content = scrape_with_jina(str(art.url))
+            detailed_summary = summarize_article_content(art, scraped_content)
+            message_parts.append(f"📝 {detailed_summary}\n")
+        except Exception as e:
+            logger.error(f"Failed to process article {art.title}: {e}")
+            message_parts.append(f"📝 {art.summary or 'Summary unavailable'}\n")
+
+    return "\n".join(message_parts)
+
+
+def send_daily_summary(articles: list[ClassifiedArticle]) -> None:
+    """Generate and send the daily summary via Telegram."""
+    logger.info("Generating daily summary for {} articles", len(articles))
+
+    try:
+        summary = create_daily_summary(articles)
+        send_telegram_message(summary)
+        logger.info("Daily summary sent successfully")
+    except Exception as e:
+        logger.error(f"Failed to send daily summary: {e}")
+        raise

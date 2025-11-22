@@ -8,6 +8,7 @@ from loguru import logger
 from .db import (
     get_all_articles,
     get_recent_articles,
+    get_todays_articles,
     upsert_articles,
     upsert_openrouter_models,
 )
@@ -18,6 +19,7 @@ from .openrouter_models import (
     get_model_data_for_db,
 )
 from .sources import fetch_all_sources
+from .telegram import send_daily_summary
 
 
 async def _async_run() -> None:
@@ -123,6 +125,22 @@ async def _async_run() -> None:
             art.title,
             art.url,
         )
+
+    # 8. Send daily Telegram summary (only today's articles)
+    try:
+        logger.info("=== SENDING TELEGRAM SUMMARY ===")
+        todays_articles = get_todays_articles()
+        if todays_articles:
+            logger.info(
+                "Sending Telegram summary for {} articles from today",
+                len(todays_articles),
+            )
+            send_daily_summary(todays_articles)
+            logger.info("Telegram summary sent successfully")
+        else:
+            logger.info("No articles from today to send via Telegram")
+    except Exception as e:
+        logger.error("Failed to send Telegram summary: {}", e)
 
 
 def run() -> None:

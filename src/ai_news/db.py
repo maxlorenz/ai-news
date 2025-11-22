@@ -74,13 +74,7 @@ def upsert_articles(articles: Iterable[ClassifiedArticle]) -> int:
             f"""
             INSERT INTO {full_table} (url, title, source, date, summary, is_interesting, dedup_key)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (url) DO UPDATE SET
-                title = excluded.title,
-                source = excluded.source,
-                date = excluded.date,
-                summary = excluded.summary,
-                is_interesting = excluded.is_interesting,
-                dedup_key = excluded.dedup_key
+            ON CONFLICT (url) DO NOTHING
             """,
             [
                 (
@@ -141,6 +135,43 @@ def get_all_articles() -> list[ClassifiedArticle]:
             FROM {full_table}
             ORDER BY date DESC
             """
+        ).fetchall()
+    finally:
+        con.close()
+
+    return [
+        ClassifiedArticle(
+            url=row[0],
+            title=row[1],
+            source=row[2],
+            date=row[3],
+            summary=row[4],
+            is_interesting=row[5],
+            dedup_key=row[6],
+        )
+        for row in rows
+    ]
+
+
+def get_todays_articles() -> list[ClassifiedArticle]:
+    """Get articles from today (UTC date) only.
+
+    Returns:
+        List of articles where date is today (UTC)
+    """
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    con = _connect()
+    full_table = f"{SETTINGS.motherduck_schema}.articles"
+    try:
+        logger.debug("Fetching articles from today (>= {})", today_start)
+        rows = con.execute(
+            f"""
+            SELECT url, title, source, date, summary, is_interesting, dedup_key
+            FROM {full_table}
+            WHERE date >= ?
+            ORDER BY date DESC
+            """,
+            [today_start],
         ).fetchall()
     finally:
         con.close()

@@ -27,21 +27,32 @@ class AppSettings(BaseModel):
     motherduck_database: str = "my_db"
     motherduck_schema: str = "ai_articles"
 
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+
 
 # Load from env with no hard-coded defaults
-api_key = os.getenv("OPENROUTER_API_KEY")
-if not api_key:
+OPENROUTER_API_KEY: Final[str] = os.getenv("OPENROUTER_API_KEY") or ""
+if not OPENROUTER_API_KEY:
     raise RuntimeError("OPENROUTER_API_KEY must be set in .env")
 
-motherduck_token = os.getenv("MOTHERDUCK_TOKEN")
-if not motherduck_token:
+OPENROUTER_HTTP_REFERER: Final[str | None] = os.getenv("OPENROUTER_HTTP_REFERER")
+OPENROUTER_X_TITLE: Final[str | None] = os.getenv("OPENROUTER_X_TITLE")
+
+MOTHERDUCK_TOKEN: Final[str] = os.getenv("MOTHERDUCK_TOKEN") or ""
+if not MOTHERDUCK_TOKEN:
     raise RuntimeError("MOTHERDUCK_TOKEN must be set in .env")
 
+TELEGRAM_BOT_TOKEN: Final[str | None] = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID: Final[str | None] = os.getenv("TELEGRAM_CHAT_ID")
+
 SETTINGS: Final[AppSettings] = AppSettings(
-    openrouter_api_key=api_key,
-    openrouter_referer=os.getenv("OPENROUTER_HTTP_REFERER"),
-    openrouter_title=os.getenv("OPENROUTER_X_TITLE"),
-    motherduck_token=motherduck_token,
+    openrouter_api_key=OPENROUTER_API_KEY,
+    openrouter_referer=OPENROUTER_HTTP_REFERER,
+    openrouter_title=OPENROUTER_X_TITLE,
+    motherduck_token=MOTHERDUCK_TOKEN,
+    telegram_bot_token=TELEGRAM_BOT_TOKEN,
+    telegram_chat_id=TELEGRAM_CHAT_ID,
 )
 
 
