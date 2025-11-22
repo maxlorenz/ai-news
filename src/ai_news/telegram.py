@@ -17,7 +17,10 @@ def _make_client() -> OpenAI:
 
 
 def send_telegram_message(message: str) -> None:
-    """Send a message to the configured Telegram chat."""
+    """Send a message to the configured Telegram chat.
+
+    If message is too long (>4096 chars), it will be split into multiple messages.
+    """
     if not SETTINGS.telegram_bot_token or not SETTINGS.telegram_chat_id:
         logger.warning("Telegram credentials not configured, skipping notification")
         return
@@ -34,8 +37,44 @@ def send_telegram_message(message: str) -> None:
         f"Telegram config - Bot token: {token_masked}, Chat ID: {SETTINGS.telegram_chat_id}"
     )
 
-    try:
+    # Telegram message limit is 4096 characters
+    MAX_MESSAGE_LENGTH = 4000  # Leave some buffer
+
+    # Split message if too long
+    if len(message) > MAX_MESSAGE_LENGTH:
+        logger.warning(
+            f"Message too long ({len(message)} chars), splitting into chunks"
+        )
+        chunks = []
+        current_chunk = ""
+
+        for line in message.split("\n"):
+            # If adding this line would exceed the limit, start a new chunk
+            if len(current_chunk) + len(line) + 1 > MAX_MESSAGE_LENGTH:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                current_chunk = line
+            else:
+                current_chunk += ("\n" if current_chunk else "") + line
+
+        # Add the last chunk
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        logger.info(f"Split message into {len(chunks)} chunks")
+
+        # Send each chunk
+        for idx, chunk in enumerate(chunks, 1):
+            logger.debug(f"Sending chunk {idx}/{len(chunks)} ({len(chunk)} chars)")
+            _send_single_message(url, chunk, token_masked)
+    else:
         logger.debug(f"Sending message of length {len(message)} chars")
+        _send_single_message(url, message, token_masked)
+
+
+def _send_single_message(url: str, message: str, token_masked: str) -> None:
+    """Send a single Telegram message (helper function)."""
+    try:
         response = httpx.post(
             url,
             json={
