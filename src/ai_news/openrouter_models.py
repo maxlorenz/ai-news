@@ -56,10 +56,13 @@ def fetch_openrouter_models(timeout: int = 30) -> list[OpenRouterModel]:
 
 
 def filter_free_text_models(models: list[OpenRouterModel]) -> list[OpenRouterModel]:
-    """Filter for free models that support text input, have >=12B parameters (if specified), and are not code-specific."""
+    """Filter for free models that support text input, have >=20B parameters (if specified), and are not code-specific or requiring opt-in."""
     import re
 
     free_text_models = []
+
+    # Providers that require opt-in and should be excluded
+    EXCLUDED_PROVIDERS = ["meituan", "moonshotai"]
 
     for model in models:
         # Check if pricing is free (prompt = "0")
@@ -76,27 +79,33 @@ def filter_free_text_models(models: list[OpenRouterModel]) -> list[OpenRouterMod
         if not (is_free and supports_text):
             continue
 
+        # Exclude models from providers that require opt-in
+        model_provider = model.id.split("/")[0] if "/" in model.id else ""
+        if model_provider in EXCLUDED_PROVIDERS:
+            logger.debug("Excluding opt-in required model {}", model.id)
+            continue
+
         # Exclude code-specific models (models with "code" or "coder" in the name)
         if "code" in model.id.lower() or "coder" in model.id.lower():
             logger.debug("Excluding code-specific model {}", model.id)
             continue
 
         # Check for parameter size in model ID
-        # Match patterns like: 7b, 8b, 9b, 11b (should be excluded)
-        # Keep models without parameter info or with >=12b
+        # Match patterns like: 7b, 8b, 9b, 11b, 19b (should be excluded)
+        # Keep models without parameter info or with >=20b
         param_match = re.search(r"(\d+)b", model.id.lower())
         if param_match:
             param_size = int(param_match.group(1))
-            if param_size < 12:
+            if param_size < 20:
                 logger.debug(
-                    "Excluding model {} ({}B parameters < 12B)", model.id, param_size
+                    "Excluding model {} ({}B parameters < 20B)", model.id, param_size
                 )
                 continue
 
         free_text_models.append(model)
 
     logger.info(
-        "Filtered to {} free text-supporting models with >=12B params, excluding code models (from {} total)",
+        "Filtered to {} free text-supporting models with >=20B params, excluding code/opt-in models (from {} total)",
         len(free_text_models),
         len(models),
     )
