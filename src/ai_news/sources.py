@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 from bs4 import BeautifulSoup
@@ -9,7 +9,6 @@ from loguru import logger
 from pydantic import HttpUrl
 
 from .models import Article, Source
-
 
 HN_URL = "https://news.ycombinator.com/"
 HF_PAPERS_BASE = "https://huggingface.co/papers"
@@ -87,7 +86,7 @@ async def fetch_hacker_news(client: httpx.AsyncClient) -> list[Article]:
                 title=title,
                 url=HttpUrl(str(url)),
                 source=Source.HACKER_NEWS,
-                date=datetime.utcnow(),  # HN doesn't show dates on front page
+                date=datetime.now(UTC),  # HN doesn't show dates on front page
             )
             articles.append(art)
         except Exception as exc:  # noqa: BLE001
@@ -134,16 +133,18 @@ async def fetch_huggingface_papers(
         if not href:
             continue
 
-        if href.startswith("/"):
-            full_url = "https://huggingface.co" + href
+        href_str = str(href)
+        if href_str.startswith("/"):
+            full_url = "https://huggingface.co" + href_str
         else:
-            full_url = str(href)
+            full_url = href_str
 
         # Try to extract date from the card
         date_el = card.select_one("time, .date, [class*='date']")
         article_date = date
         if date_el:
-            date_text = date_el.get("datetime") or date_el.get_text(strip=True)
+            date_text_raw = date_el.get("datetime") or date_el.get_text(strip=True)
+            date_text = str(date_text_raw) if date_text_raw else ""
             parsed = parse_date_string(date_text)
             if parsed:
                 article_date = parsed
@@ -201,9 +202,10 @@ async def fetch_apple_ml(client: httpx.AsyncClient) -> list[Article]:
 
         # Try to extract date from the card
         date_el = card.select_one("time, .date, [class*='date']")
-        article_date = datetime.utcnow()
+        article_date = datetime.now(UTC)
         if date_el:
-            date_text = date_el.get("datetime") or date_el.get_text(strip=True)
+            date_text_raw = date_el.get("datetime") or date_el.get_text(strip=True)
+            date_text = str(date_text_raw) if date_text_raw else ""
             parsed = parse_date_string(date_text)
             if parsed:
                 article_date = parsed
@@ -255,9 +257,10 @@ async def fetch_google_ai(client: httpx.AsyncClient) -> list[Article]:
         # Try to find date near the link
         parent = link.find_parent("article") or link.find_parent("div")
         date_el = parent.select_one("time, .date, [class*='date']") if parent else None
-        article_date = datetime.utcnow()
+        article_date = datetime.now(UTC)
         if date_el:
-            date_text = date_el.get("datetime") or date_el.get_text(strip=True)
+            date_text_raw = date_el.get("datetime") or date_el.get_text(strip=True)
+            date_text = str(date_text_raw) if date_text_raw else ""
             parsed = parse_date_string(date_text)
             if parsed:
                 article_date = parsed
@@ -315,9 +318,10 @@ async def fetch_mit_ai(client: httpx.AsyncClient) -> list[Article]:
 
         # Try to extract date
         date_el = article.select_one("time, .date, [class*='date']")
-        article_date = datetime.utcnow()
+        article_date = datetime.now(UTC)
         if date_el:
-            date_text = date_el.get("datetime") or date_el.get_text(strip=True)
+            date_text_raw = date_el.get("datetime") or date_el.get_text(strip=True)
+            date_text = str(date_text_raw) if date_text_raw else ""
             parsed = parse_date_string(date_text)
             if parsed:
                 article_date = parsed
@@ -368,7 +372,7 @@ async def fetch_meta_ai(client: httpx.AsyncClient) -> list[Article]:
 
         # For Meta, dates appear in text nodes near the article
         # Try to find date in the parent container's full text
-        article_date = datetime.utcnow()
+        article_date = datetime.now(UTC)
         parent = link.find_parent("div") or link.find_parent("article")
         if parent:
             # Get all text from parent and search for date pattern
@@ -451,7 +455,7 @@ async def fetch_berkeley_ai(client: httpx.AsyncClient) -> list[Article]:
                 date_el = meta_span
                 break
 
-        article_date = datetime.utcnow()
+        article_date = datetime.now(UTC)
         if date_el:
             date_text = date_el.get_text(strip=True)
             parsed = parse_date_string(date_text)

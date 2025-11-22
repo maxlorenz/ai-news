@@ -7,7 +7,6 @@ from typing import Final
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-
 # Point to project root, not src/
 BASE_DIR: Final[Path] = Path(__file__).resolve().parents[2]
 ENV_PATH: Final[Path] = BASE_DIR / ".env"

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import httpx
 from loguru import logger
-from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from .llm import _choose_model
+from .llm import _make_client as _make_llm_client
 from .models import ClassifiedArticle
 from .settings import SETTINGS
-from .llm import _choose_model, _make_client as _make_llm_client
 
 
 def send_telegram_message(message: str) -> None:

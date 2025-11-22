@@ -3,8 +3,8 @@
 import pytest
 from pytest_httpx import HTTPXMock
 
-from ai_news.telegram import send_telegram_message, _send_single_message
 from ai_news.settings import SETTINGS
+from ai_news.telegram import send_telegram_message
 
 
 @pytest.mark.unit
@@ -14,7 +14,7 @@ def test_send_telegram_message_success(httpx_mock: HTTPXMock, monkeypatch):
     monkeypatch.setattr(SETTINGS, "telegram_chat_id", "-123456")
 
     httpx_mock.add_response(
-        url=f"https://api.telegram.org/bottest_token/sendMessage",
+        url="https://api.telegram.org/bottest_token/sendMessage",
         json={"ok": True, "result": {"message_id": 123}},
         status_code=200,
     )
@@ -23,7 +23,8 @@ def test_send_telegram_message_success(httpx_mock: HTTPXMock, monkeypatch):
 
     request = httpx_mock.get_request()
     assert request.method == "POST"
-    assert '"text": "Test message"' in request.content.decode()
+    # JSON has no space after colon when compact
+    assert '"text":"Test message"' in request.content.decode()
 
 
 @pytest.mark.unit
@@ -32,12 +33,14 @@ def test_send_telegram_message_splits_long_messages(httpx_mock: HTTPXMock, monke
     monkeypatch.setattr(SETTINGS, "telegram_bot_token", "test_token")
     monkeypatch.setattr(SETTINGS, "telegram_chat_id", "-123456")
 
-    # Mock successful responses
+    # Mock successful responses for 2 chunks
     httpx_mock.add_response(json={"ok": True}, status_code=200)
     httpx_mock.add_response(json={"ok": True}, status_code=200)
 
-    # Create a message longer than 4000 chars
-    long_message = "A" * 5000
+    # Create a message with newlines that will split into 2 chunks
+    # Each line is 100 chars, so 50 lines = 5000 chars, will split into 2 chunks at 4000 char boundary
+    lines = ["A" * 100 for _ in range(50)]
+    long_message = "\n".join(lines)
 
     send_telegram_message(long_message)
 

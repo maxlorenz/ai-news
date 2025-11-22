@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import duckdb
 from loguru import logger
@@ -95,7 +95,7 @@ def upsert_articles(articles: Iterable[ClassifiedArticle]) -> int:
 
 
 def get_recent_articles(hours: int = 48) -> list[ClassifiedArticle]:
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = datetime.now(UTC) - timedelta(hours=hours)
     con = _connect()
     full_table = f"{SETTINGS.motherduck_schema}.articles"
     try:
@@ -159,7 +159,7 @@ def get_todays_articles() -> list[ClassifiedArticle]:
     Returns:
         List of articles where date is today (UTC)
     """
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     con = _connect()
     full_table = f"{SETTINGS.motherduck_schema}.articles"
     try:

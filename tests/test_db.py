@@ -1,33 +1,39 @@
 """Tests for database operations."""
 
-import pytest
 from datetime import datetime
-import duckdb
 
-from ai_news.models import ClassifiedArticle, Source
+import duckdb
+import pytest
+
 from ai_news.db import (
-    upsert_articles,
     get_recent_articles,
     get_todays_articles,
-    replace_openrouter_models,
+    upsert_articles,
 )
+from ai_news.models import ClassifiedArticle, Source
+
+
+class MockConnection:
+    """Wrapper that prevents the real connection from being closed."""
+
+    def __init__(self, real_conn):
+        self._conn = real_conn
+
+    def __getattr__(self, name):
+        if name == "close":
+            return lambda: None  # No-op close
+        return getattr(self._conn, name)
 
 
 @pytest.fixture
-def local_db(tmp_path, monkeypatch):
-    """Setup local DuckDB for testing."""
-    db_path = tmp_path / "test.db"
+def local_db(monkeypatch):
+    """Setup in-memory DuckDB for testing."""
+    # Create an in-memory connection
+    test_conn = duckdb.connect(":memory:")
 
-    # Mock settings to use local DB
-    from ai_news import settings
-
-    monkeypatch.setattr(settings.SETTINGS, "motherduck_token", "")
-    monkeypatch.setattr(settings.SETTINGS, "motherduck_database", str(db_path))
-    monkeypatch.setattr(settings.SETTINGS, "motherduck_schema", "main")
-
-    # Create test table
-    con = duckdb.connect(str(db_path))
-    con.execute("""
+    # Create schema and tables
+    test_conn.execute("CREATE SCHEMA IF NOT EXISTS main")
+    test_conn.execute("""
         CREATE TABLE main.articles (
             url TEXT PRIMARY KEY,
             title TEXT NOT NULL,
@@ -38,9 +44,37 @@ def local_db(tmp_path, monkeypatch):
             dedup_key TEXT
         )
     """)
-    con.close()
+    test_conn.execute("""
+        CREATE TABLE main.openrouter_models (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            pricing_prompt TEXT NOT NULL,
+            context_length INTEGER NOT NULL,
+            created INTEGER,
+            last_updated TIMESTAMP NOT NULL
+        )
+    """)
 
-    return db_path
+    # Wrap the connection to prevent closing
+    wrapped_conn = MockConnection(test_conn)
+
+    # Mock the _connect function to return our wrapped connection
+    import ai_news.db
+
+    def mock_connect():
+        return wrapped_conn
+
+    monkeypatch.setattr(ai_news.db, "_connect", mock_connect)
+
+    # Mock settings
+    from ai_news import settings
+
+    monkeypatch.setattr(settings.SETTINGS, "motherduck_schema", "main")
+
+    yield test_conn
+
+    # Cleanup
+    test_conn.close()
 
 
 @pytest.mark.unit
@@ -65,6 +99,10 @@ def test_upsert_articles(local_db):
     count2 = upsert_articles(articles)
     assert count2 == 1
 
+    # Verify only 1 article in DB
+    result = local_db.execute("SELECT COUNT(*) FROM main.articles").fetchone()
+    assert result[0] == 1
+
 
 @pytest.mark.unit
 def test_get_recent_articles(local_db):
@@ -75,7 +113,7 @@ def test_get_recent_articles(local_db):
             title="Recent Article",
             url="https://test.com/recent",
             source=Source.HACKER_NEWS,
-            date=datetime.utcnow(),
+            date=datetime.now(),
             is_interesting=True,
             summary="Recent",
             dedup_key="recent",
@@ -96,7 +134,7 @@ def test_get_todays_articles(local_db):
             title="Today Article",
             url="https://test.com/today",
             source=Source.HACKER_NEWS,
-            date=datetime.utcnow(),
+            date=datetime.now(),
             is_interesting=True,
             summary="Today",
             dedup_key="today",

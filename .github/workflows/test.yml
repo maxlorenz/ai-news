@@ -27,4 +27,9 @@ jobs:
         run: uv sync
 
       - name: Run pytest
+        env:
+          OPENROUTER_API_KEY: dummy_key_for_tests
+          MOTHERDUCK_TOKEN: dummy_token_for_tests
+          TELEGRAM_BOT_TOKEN: dummy_bot_token
+          TELEGRAM_CHAT_ID: -123456789
         run: uv run pytest -v --tb=short

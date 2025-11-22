@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 
 from loguru import logger
 
@@ -23,7 +23,7 @@ from .telegram import send_daily_summary
 
 
 async def _async_run() -> None:
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     logger.info("Starting AI news run at {}", now.isoformat())
 
     # 0. Fetch and replace OpenRouter models

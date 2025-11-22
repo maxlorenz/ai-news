@@ -7,9 +7,9 @@ from loguru import logger
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from .db import get_available_openrouter_models
 from .models import Article, ClassifiedArticle
 from .settings import OPENROUTER_MODELS, SETTINGS
-from .db import get_available_openrouter_models
 
 
 def _make_client() -> OpenAI:

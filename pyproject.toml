@@ -8,7 +8,6 @@ dependencies = [
     "backoff>=2.2.1",
     "beautifulsoup4>=4.14.2",
     "httpx>=0.28.1",
-    "polars>=1.12.0",
     "loguru>=0.7.3",
     "openai>=2.8.1",
     "pydantic>=2.12.4",
