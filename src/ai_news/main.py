@@ -7,6 +7,7 @@ from loguru import logger
 
 from .db import (
     get_all_articles,
+    get_recent_article_urls,
     get_recent_articles,
     get_todays_articles,
     replace_openrouter_models,
@@ -43,8 +44,25 @@ async def _async_run() -> None:
         logger.error("Failed to fetch OpenRouter models: {}", e)
         logger.warning("Continuing with existing models in database")
 
+    # 0.5. Load recent article URLs for deduplication
+    logger.info("=== LOADING RECENT URLS FOR DEDUPLICATION ===")
+    existing_urls = get_recent_article_urls(limit=1000)
+
     # 1. Fetch raw articles from all sources
     raw_articles = await fetch_all_sources(current_date=now)
+
+    # 1.2. Filter out already-processed articles
+    logger.info("=== FILTERING DUPLICATE ARTICLES ===")
+    initial_count = len(raw_articles)
+    raw_articles = [art for art in raw_articles if str(art.url) not in existing_urls]
+    filtered_count = initial_count - len(raw_articles)
+    logger.info(
+        f"Filtered out {filtered_count} already-processed articles ({len(raw_articles)} remaining from {initial_count} total)"
+    )
+
+    if len(raw_articles) == 0:
+        logger.info("No new articles to process, exiting")
+        return
 
     # Log what we fetched
     logger.info("=== FETCHED ARTICLES ===")
@@ -58,6 +76,42 @@ async def _async_run() -> None:
         )
     if len(raw_articles) > 10:
         logger.info("... and {} more articles", len(raw_articles) - 10)
+
+    # 1.5. Enrich Apple ML articles with accurate dates (they default to today)
+    from .models import ClassifiedArticle, Source
+
+    apple_ml_articles = [a for a in raw_articles if a.source == Source.APPLE_ML]
+    if apple_ml_articles:
+        logger.info("=== ENRICHING APPLE ML DATES ===")
+        scraper = JinaScraper()
+        logger.info(
+            "Enriching {} Apple ML articles with dates from Jina scraper",
+            len(apple_ml_articles),
+        )
+        # Convert Article to ClassifiedArticle for enrichment
+        apple_ml_classified = [
+            ClassifiedArticle(
+                url=a.url,
+                title=a.title,
+                source=a.source,
+                date=a.date,
+                summary=a.summary,
+                is_interesting=False,
+            )
+            for a in apple_ml_articles
+        ]
+        enriched_apple_ml = await scraper.enrich_articles_with_dates_async(
+            apple_ml_classified
+        )
+
+        # Update the dates in raw_articles
+        apple_ml_urls = {str(a.url): a for a in enriched_apple_ml}
+        for idx, art in enumerate(raw_articles):
+            if art.source == Source.APPLE_ML and str(art.url) in apple_ml_urls:
+                enriched = apple_ml_urls[str(art.url)]
+                raw_articles[idx] = art.model_copy(update={"date": enriched.date})
+
+        logger.info("Finished enriching Apple ML article dates")
 
     # 2. Group articles by source
     from collections import defaultdict

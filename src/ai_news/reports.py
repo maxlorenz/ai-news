@@ -158,14 +158,32 @@ def generate_daily_report(articles: list[ClassifiedArticle]) -> DailyReport:
         message_parts.append(f"*{idx}. {art.title}*")
         message_parts.append(f"🔗 {art.url}\n")
 
-        # Scrape and summarize
+        # Scrape once, then retry LLM summarization separately
         try:
             scraped_content = scraper.scrape_url(str(art.url))
-            detailed_summary = summarize_article_content(art, scraped_content)
-            message_parts.append(f"📝 {detailed_summary}\n")
         except Exception as e:
-            logger.error(f"Failed to process article {art.title}: {e}")
+            logger.error(f"Failed to scrape article {art.title}: {e}")
             message_parts.append(f"📝 {art.summary or 'Summary unavailable'}\n")
+            continue
+
+        # Try to summarize with retries (without re-scraping)
+        detailed_summary = art.summary or "Summary unavailable"
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                detailed_summary = summarize_article_content(art, scraped_content)
+                break  # Success, exit retry loop
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Failed to summarize {art.title} (attempt {attempt + 1}/{max_retries}): {e}, retrying..."
+                    )
+                else:
+                    logger.error(
+                        f"Failed to summarize {art.title} after {max_retries} attempts: {e}"
+                    )
+
+        message_parts.append(f"📝 {detailed_summary}\n")
 
     report_content = "\n".join(message_parts)
 

@@ -57,12 +57,15 @@ def _connect() -> duckdb.DuckDBPyConnection:
         """
     )
 
-    # Create reports table
+    # Create reports table (drop and recreate to ensure schema is correct)
     reports_table = f"{SETTINGS.motherduck_schema}.reports"
+    con.execute(f"DROP TABLE IF EXISTS {reports_table}")
+    con.execute(f"DROP SEQUENCE IF EXISTS {SETTINGS.motherduck_schema}.reports_id_seq")
+    con.execute(f"CREATE SEQUENCE {SETTINGS.motherduck_schema}.reports_id_seq START 1")
     con.execute(
         f"""
-        CREATE TABLE IF NOT EXISTS {reports_table} (
-            id INTEGER PRIMARY KEY,
+        CREATE TABLE {reports_table} (
+            id INTEGER DEFAULT nextval('{SETTINGS.motherduck_schema}.reports_id_seq'),
             report_date TIMESTAMP NOT NULL,
             article_count INTEGER NOT NULL,
             report_content TEXT NOT NULL,
@@ -167,6 +170,38 @@ def get_all_articles() -> list[ClassifiedArticle]:
         )
         for row in rows
     ]
+
+
+def get_recent_article_urls(limit: int = 1000) -> set[str]:
+    """Get URLs of recent articles for deduplication.
+
+    Args:
+        limit: Maximum number of URLs to fetch (default 1000)
+
+    Returns:
+        Set of article URLs
+    """
+    con = _connect()
+    full_table = f"{SETTINGS.motherduck_schema}.articles"
+    try:
+        logger.debug(
+            f"Fetching last {limit} article URLs from database for deduplication"
+        )
+        rows = con.execute(
+            f"""
+            SELECT url
+            FROM {full_table}
+            ORDER BY date DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+
+        urls = {row[0] for row in rows}
+        logger.info(f"Loaded {len(urls)} recent article URLs for deduplication")
+        return urls
+    finally:
+        con.close()
 
 
 def get_todays_articles() -> list[ClassifiedArticle]:
