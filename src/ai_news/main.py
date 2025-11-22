@@ -10,6 +10,7 @@ from .db import (
     get_recent_articles,
     get_todays_articles,
     replace_openrouter_models,
+    save_report,
     upsert_articles,
 )
 from .llm import classify_articles, detect_duplicates
@@ -18,6 +19,7 @@ from .openrouter_models import (
     filter_free_text_models,
     get_model_data_for_db,
 )
+from .scraper import JinaScraper
 from .sources import fetch_all_sources
 from .telegram import send_daily_summary
 
@@ -96,6 +98,29 @@ async def _async_run() -> None:
     if total_interesting == 0:
         logger.warning("No articles classified as interesting!")
 
+    # 3.5. Enrich interesting articles with accurate dates using Jina scraper
+    logger.info("=== ENRICHING ARTICLES WITH DATES ===")
+    interesting_articles = [a for a in classified if a.is_interesting]
+    if interesting_articles:
+        scraper = JinaScraper()
+        logger.info(
+            "Enriching {} interesting articles with dates from Jina scraper",
+            len(interesting_articles),
+        )
+        enriched_articles = await scraper.enrich_articles_with_dates_async(
+            interesting_articles
+        )
+
+        # Replace the interesting articles in classified list with enriched versions
+        enriched_map = {str(art.url): art for art in enriched_articles}
+        new_classified = []
+        for art in classified:
+            if art.is_interesting and str(art.url) in enriched_map:
+                new_classified.append(enriched_map[str(art.url)])
+            else:
+                new_classified.append(art)
+        classified = new_classified
+
     # 4. Load recent articles for duplicate detection (48h)
     recent = get_recent_articles(hours=48)
 
@@ -138,7 +163,19 @@ async def _async_run() -> None:
                 "Sending Telegram summary for {} articles from today",
                 len(todays_articles),
             )
-            send_daily_summary(todays_articles)
+            # Generate report and send via Telegram
+            report = send_daily_summary(todays_articles)
+
+            # Store report in database
+            logger.info("Storing report in MotherDuck")
+            report_id = save_report(
+                report_date=report.report_date,
+                article_count=report.article_count,
+                report_content=report.report_content,
+                top_3_article_urls=report.top_3_article_urls,
+                selection_reasoning=report.selection_reasoning,
+            )
+            logger.info(f"Report stored in database with ID: {report_id}")
             logger.info("Telegram summary sent successfully")
         else:
             logger.info("No articles from today to send via Telegram")

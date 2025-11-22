@@ -57,6 +57,22 @@ def _connect() -> duckdb.DuckDBPyConnection:
         """
     )
 
+    # Create reports table
+    reports_table = f"{SETTINGS.motherduck_schema}.reports"
+    con.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {reports_table} (
+            id INTEGER PRIMARY KEY,
+            report_date TIMESTAMP NOT NULL,
+            article_count INTEGER NOT NULL,
+            report_content TEXT NOT NULL,
+            top_3_article_urls TEXT NOT NULL,
+            selection_reasoning TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
     return con
 
 
@@ -249,5 +265,123 @@ def get_available_openrouter_models() -> list[str]:
             "Found {} OpenRouter models in database (limited to 10)", len(model_ids)
         )
         return model_ids
+    finally:
+        con.close()
+
+
+def save_report(
+    report_date: datetime,
+    article_count: int,
+    report_content: str,
+    top_3_article_urls: list[str],
+    selection_reasoning: str | None = None,
+) -> int:
+    """Save a daily report to the database.
+
+    Args:
+        report_date: Date/time of the report
+        article_count: Number of articles in the report
+        report_content: Full markdown content of the report
+        top_3_article_urls: List of URLs for the top 3 articles
+        selection_reasoning: AI reasoning for top 3 selection (optional)
+
+    Returns:
+        Row ID of the inserted report
+    """
+    con = _connect()
+    reports_table = f"{SETTINGS.motherduck_schema}.reports"
+    try:
+        logger.info(f"Saving report for {report_date} with {article_count} articles")
+        # Convert list to JSON string for storage
+        urls_json = ",".join(top_3_article_urls)
+
+        result = con.execute(
+            f"""
+            INSERT INTO {reports_table} (report_date, article_count, report_content, top_3_article_urls, selection_reasoning)
+            VALUES (?, ?, ?, ?, ?)
+            RETURNING id
+            """,
+            [
+                report_date,
+                article_count,
+                report_content,
+                urls_json,
+                selection_reasoning,
+            ],
+        ).fetchone()
+
+        report_id = result[0] if result else 0
+        logger.info(f"Report saved with ID: {report_id}")
+        return report_id
+    finally:
+        con.close()
+
+
+def get_latest_report() -> (
+    tuple[int, datetime, int, str, list[str], str | None, datetime] | None
+):
+    """Get the most recent report from the database.
+
+    Returns:
+        Tuple of (id, report_date, article_count, report_content, top_3_article_urls, selection_reasoning, created_at)
+        or None if no reports exist
+    """
+    con = _connect()
+    reports_table = f"{SETTINGS.motherduck_schema}.reports"
+    try:
+        logger.debug("Fetching latest report from database")
+        row = con.execute(
+            f"""
+            SELECT id, report_date, article_count, report_content, top_3_article_urls, selection_reasoning, created_at
+            FROM {reports_table}
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+        if not row:
+            return None
+
+        # Parse URLs from comma-separated string
+        urls = row[4].split(",") if row[4] else []
+
+        return (row[0], row[1], row[2], row[3], urls, row[5], row[6])
+    finally:
+        con.close()
+
+
+def get_reports_by_date_range(
+    start_date: datetime, end_date: datetime
+) -> list[tuple[int, datetime, int, str, list[str], str | None, datetime]]:
+    """Get all reports within a date range.
+
+    Args:
+        start_date: Start of date range (inclusive)
+        end_date: End of date range (inclusive)
+
+    Returns:
+        List of tuples (id, report_date, article_count, report_content, top_3_article_urls, selection_reasoning, created_at)
+    """
+    con = _connect()
+    reports_table = f"{SETTINGS.motherduck_schema}.reports"
+    try:
+        logger.debug(f"Fetching reports from {start_date} to {end_date}")
+        rows = con.execute(
+            f"""
+            SELECT id, report_date, article_count, report_content, top_3_article_urls, selection_reasoning, created_at
+            FROM {reports_table}
+            WHERE report_date >= ? AND report_date <= ?
+            ORDER BY report_date DESC
+            """,
+            [start_date, end_date],
+        ).fetchall()
+
+        results = []
+        for row in rows:
+            # Parse URLs from comma-separated string
+            urls = row[4].split(",") if row[4] else []
+            results.append((row[0], row[1], row[2], row[3], urls, row[5], row[6]))
+
+        return results
     finally:
         con.close()

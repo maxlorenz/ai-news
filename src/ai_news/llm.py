@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from .db import get_available_openrouter_models
 from .models import Article, ClassifiedArticle
-from .settings import OPENROUTER_MODELS, SETTINGS
+from .settings import SETTINGS
 
 
 def _make_client() -> OpenAI:
@@ -99,25 +99,20 @@ def _build_user_input(articles: Iterable[Article]) -> ArticlesInput:
 def _choose_model(exclude: list[str] | None = None) -> str:
     exclude = exclude or []
 
-    # Try to load models from database first
-    try:
-        db_models = get_available_openrouter_models()
-        if db_models:
-            candidates = [m for m in db_models if m not in exclude]
-            if not candidates:
-                candidates = db_models
-            choice = random.choice(candidates)
-            logger.debug("Using OpenRouter model from DB: {}", choice)
-            return choice
-    except Exception as e:
-        logger.warning("Failed to load models from DB: {}", e)
+    # Load models from database
+    db_models = get_available_openrouter_models()
+    if not db_models:
+        raise RuntimeError(
+            "No OpenRouter models available in database. "
+            "Please run the OpenRouter model fetch first."
+        )
 
-    # Fallback to hardcoded list
-    candidates = [m for m in OPENROUTER_MODELS if m not in exclude]
+    candidates = [m for m in db_models if m not in exclude]
     if not candidates:
-        candidates = OPENROUTER_MODELS
+        candidates = db_models
+
     choice = random.choice(candidates)
-    logger.debug("Using OpenRouter model from settings: {}", choice)
+    logger.debug("Using OpenRouter model from DB: {}", choice)
     return choice
 
 
@@ -166,15 +161,13 @@ def classify_articles(articles: list[Article]) -> list[ClassifiedArticle]:
     # For simplicity, send them all in one batch; the lists are small.
     user_input = _build_user_input(articles)
 
-    # Get available models from DB or fallback to settings
-    try:
-        available_models = get_available_openrouter_models()
-        if not available_models:
-            logger.warning("No models in DB, using hardcoded list")
-            available_models = list(OPENROUTER_MODELS)
-    except Exception as e:
-        logger.warning("Failed to load models from DB: {}, using hardcoded list", e)
-        available_models = list(OPENROUTER_MODELS)
+    # Get available models from DB
+    available_models = get_available_openrouter_models()
+    if not available_models:
+        raise RuntimeError(
+            "No OpenRouter models available in database. "
+            "Please run the OpenRouter model fetch first."
+        )
 
     tried: list[str] = []
     last_exc: Exception | None = None

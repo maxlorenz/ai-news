@@ -53,24 +53,3 @@ SETTINGS: Final[AppSettings] = AppSettings(
     telegram_bot_token=TELEGRAM_BOT_TOKEN,
     telegram_chat_id=TELEGRAM_CHAT_ID,
 )
-
-
-# List of OpenRouter models to randomly choose from (mix of free and paid)
-OPENROUTER_MODELS: Final[list[str]] = [
-    # Non-free models (paid)
-    "google/gemini-2.5-flash",
-    "openai/gpt-5-mini",
-    "qwen/qwen3-235b-a22b-2507",
-    "openai/gpt-oss-120b",
-    "openai/gpt-5-nano",
-    "mistralai/mistral-small-24b-instruct-2501",
-    # Free models
-    "x-ai/grok-4.1-fast:free",
-    "z-ai/glm-4.5-air:free",
-    "moonshotai/kimi-k2:free",
-    "mistralai/mistral-small-3.2-24b-instruct:free",
-    "deepseek/deepseek-r1-0528:free",
-    "qwen/qwen3-30b-a3b:free",
-    "deepseek/deepseek-chat-v3-0324:free",
-    "mistralai/mistral-small-3.1-24b-instruct:free",
-]
